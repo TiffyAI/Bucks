@@ -1,9 +1,9 @@
 // src/App.tsx
 import React, { useEffect, useState } from "react";
 import { ethers } from "ethers";
-import TIFFY_ABI from "./tiffyABI.json";
+import TIFFY_ABI from "./abi/TiffyAI.json";
 
-const TIFFY_ADDRESS = "0x...PUT_YOUR_DEPLOYED_ADDRESS_HERE..."; // set your deployed TiffyAI contract address
+const TIFFY_ADDRESS = "0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5"; // set your deployed TiffyAI contract address
 const ADMIN_OWNER = "0x2a234d5Cc7431B824723c84c8605fD3968BF0255";
 
 declare global {
