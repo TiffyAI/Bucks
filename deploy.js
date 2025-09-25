@@ -5,7 +5,7 @@ async function main() {
   console.log("Deploying with:", deployer.address);
 
   const SideContract = await hre.ethers.getContractFactory("SideContract");
-  const side = await SideContract.deploy("0xE488253D..."); // TIFFY address
+  const side = await SideContract.deploy("0xE488253D..."); // Replace with TIFFY address
   await side.waitForDeployment();
   console.log("SideContract deployed to:", await side.getAddress());
 }
