@@ -7,7 +7,7 @@ contract SideContract is Ownable {
     address public tiffy;
     address public wbnb = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address public router = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
-    address public pool = 0x1305302e...; // Replace
+    address public pool = 0x1305302e...; // Replace with your TIFFY/WBNB pair address
 
     constructor(address _tiffy) Ownable(msg.sender) {
         tiffy = _tiffy;
