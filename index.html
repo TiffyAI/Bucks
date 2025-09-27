@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TIFFY Trader Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #trades, #pool, #wallets { margin-bottom: 20px; }
+        #walletForm, #distributeForm { margin-top: 20px; }
+        button { padding: 10px; margin-top: 10px; }
+        input { padding: 5px; width: 300px; }
+    </style>
+</head>
+<body>
+    <h1>TIFFY Trader Dashboard</h1>
+    <h2>Recent Trades</h2>
+    <div id="trades">Loading trades...</div>
+    <h2>Pool Status</h2>
+    <div id="pool">Loading pool...</div>
+    <h2>Wallet Balances</h2>
+    <div id="wallets">Loading wallets...</div>
+    <h2>Add Exempt Wallets</h2>
+    <form id="walletForm">
+        <input type="text" id="newWallets" placeholder="Enter wallet addresses (comma-separated)">
+        <button type="submit">Add Wallets</button>
+    </form>
+    <h2>Distribute BNB to Exempt Wallets</h2>
+    <form id="distributeForm">
+        <input type="text" id="distributeWallets" placeholder="Enter wallet addresses (comma-separated)">
+        <input type="number" id="bnbAmount" placeholder="BNB amount (e.g., 0.005)" step="0.001">
+        <button type="submit">Distribute BNB</button>
+    </form>
+
+    <script>
+        const BSCSCAN_API_KEY = 'your_bscscan_api_key'; // Get from BscScan
+        const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d'; // TIFFY/WBNB pair
+        const ADMIN_WALLET = '0x2a234d5Cc7431B824723c84c8605fD3968BF0255';
+        const LP_WALLET = '0x85...'; // Update with actual LP wallet
+        const BACKEND_URL = 'your_render_backend_url'; // Render Node.js service (set after deploy)
+
+        // Fetch trades
+        async function fetchTrades() {
+            const url = `https://api.bscscan.com/api?module=account&action=txlist&address=${ADMIN_WALLET}&sort=desc&apikey=${BSCSCAN_API_KEY}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const trades = data.result.slice(0, 10).map(tx => `
+                <p>Tx: <a href="https://bscscan.com/tx/${tx.hash}" target="_blank">${tx.hash.slice(0, 10)}...</a><br>
+                Value: ${(tx.value / 1e18).toFixed(6)} BNB<br>
+                Time: ${new Date(tx.timeStamp * 1000).toLocaleString()}</p>
+            `).join('');
+            document.getElementById('trades').innerHTML = trades || 'No trades found';
+        }
+
+        // Fetch pool status
+        async function fetchPool() {
+            const url = `https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xE488253D...&address=${POOL_ADDRESS}&tag=latest&apikey=${BSCSCAN_API_KEY}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const tiffyBal = (data.result / 1e18).toFixed(2);
+            const wbnbUrl = `https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c&address=${POOL_ADDRESS}&tag=latest&apikey=${BSCSCAN_API_KEY}`;
+            const wbnbRes = await fetch(wbnbUrl);
+            const wbnbData = await wbnbRes.json();
+            const wbnbBal = (wbnbData.result / 1e18).toFixed(4);
+            document.getElementById('pool').innerHTML = `TIFFY: ${tiffyBal}, WBNB: ${wbnbBal} (~$${tiffyBal * 16.004342 + wbnbBal * 970})`;
+        }
+
+        // Fetch wallet balances
+        async function fetchWallets() {
+            const adminBal = await fetch(`https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xE488253D...&address=${ADMIN_WALLET}&tag=latest&apikey=${BSCSCAN_API_KEY}`);
+            const adminData = await adminBal.json();
+            const lpBal = await fetch(`https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xE488253D...&address=${LP_WALLET}&tag=latest&apikey=${BSCSCAN_API_KEY}`;
+            const lpData = await lpBal.json();
+            document.getElementById('wallets').innerHTML = `
+                Admin (${ADMIN_WALLET}): ${(adminData.result / 1e18).toFixed(2)} TIFFY<br>
+                LP (${LP_WALLET}): ${(lpData.result / 1e18).toFixed(2)} TIFFY
+            `;
+        }
+
+        // Add wallets
+        document.getElementById('walletForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const wallets = document.getElementById('newWallets').value.split(',').map(w => w.trim());
+            if (wallets.length === 0 || wallets.some(w => !w.match(/^0x[a-fA-F0-9]{40}$/))) {
+                alert('Invalid wallet addresses');
+                return;
+            }
+            try {
+                const res = await fetch(`${BACKEND_URL}/exempt`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ wallets })
+                });
+                const result = await res.json();
+                alert(result.message || 'Wallets added!');
+                fetchWallets();
+            } catch (e) {
+                alert('Failed to add wallets: ' + e.message);
+            }
+        });
+
+        // Distribute BNB
+        document.getElementById('distributeForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const wallets = document.getElementById('distributeWallets').value.split(',').map(w => w.trim());
+            const amount = parseFloat(document.getElementById('bnbAmount').value);
+            if (wallets.length === 0 || wallets.some(w => !w.match(/^0x[a-fA-F0-9]{40}$/)) || isNaN(amount) || amount <= 0) {
+                alert('Invalid wallets or BNB amount');
+                return;
+            }
+            try {
+                const res = await fetch(`${BACKEND_URL}/distribute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ wallets, amount })
+                });
+                const result = await res.json();
+                alert(result.message || `Distributed ${amount} BNB to ${wallets.length} wallets`);
+            } catch (e) {
+                alert('Failed to distribute BNB: ' + e.message);
+            }
+        });
+
+        // Load data
+        fetchTrades();
+        fetchPool();
+        fetchWallets();
+        setInterval(fetchTrades, 60000);
+        setInterval(fetchPool, 60000);
+        setInterval(fetchWallets, 60000);
+    </script>
+</body>
+</html>
