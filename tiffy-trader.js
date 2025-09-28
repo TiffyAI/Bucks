@@ -14,22 +14,23 @@ const PRIVATES = [
   process.env.WALLET3,
   process.env.WALLET4,
   process.env.WALLET5
-].filter(key => key); // Use WALLET1-5 from TIFFYAI contract + admin
+].filter(key => key);
 
 // Contract addresses
-const TIFFY = '0xE488253D...'; // Replace with TIFFY address
+const TIFFY = '0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5';
 const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 const ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E';
-const SIDE_CONTRACT = '0x2a234d5C...'; // Replace with deployed side contract address
-const ADMIN_OWNER = '0x2a234d5C...'; // Replace with admin wallet
-const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d'; // TIFFY/WBNB pair
-const LP_WALLET = '0x85...'; // Replace with LP wallet
+const SIDE_CONTRACT = '0x2a234d5C...'; // Update after deployment
+const ADMIN_OWNER = '0x2a234d5Cc7431B824723c84c8605fD3968BF0255';
+const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d';
+const LP_WALLET = '0x6a28ae01Ad12bC73D0c70E88D23CeEd6d6382D19';
 
 // ABIs
 const tiffyAbi = [
   'function approve(address,uint256) external returns(bool)',
   'function balanceOf(address) view returns(uint256)',
-  'function transfer(address,uint256) external returns(bool)'
+  'function transfer(address,uint256) external returns(bool)',
+  'function isFeeExempt(address) view returns(bool)' // Added for exemption check
 ];
 const wbnbAbi = [
   'function approve(address,uint256) external returns(bool)',
@@ -46,7 +47,7 @@ const sideAbi = [
   'function feedPool(uint256) external',
   'function setExempt(address[] memory wallets, bool exempt) external',
   'function addLiquidity(uint256,uint256) external',
-  'function withdrawBNB(uint256) external' // New function
+  'function withdrawBNB(uint256) external'
 ];
 
 // Contract instances
@@ -70,6 +71,23 @@ async function withdrawBNB(signer, amount) {
     console.log(`Withdrew ${amount} BNB from TIFFYAI contract via side contract`);
   } catch (e) {
     console.log(`Withdraw failed: ${e.reason || e.message}`);
+  }
+}
+
+// DISTRIBUTE BNB TO WALLETS
+async function distributeBNB(signer, recipients, amountEach) {
+  const tx = { gasPrice: MIN_GAS_PRICE, gasLimit: 21000 };
+  for (const recipient of recipients) {
+    try {
+      await signer.sendTransaction({
+        to: recipient,
+        value: ethers.parseUnits(amountEach.toString(), 18),
+        ...tx
+      });
+      console.log(`Sent ${amountEach} BNB to ${recipient}`);
+    } catch (e) {
+      console.log(`Failed to send BNB to ${recipient}: ${e.reason || e.message}`);
+    }
   }
 }
 
@@ -110,7 +128,7 @@ async function addLiquidity(signer, tiffyAmount, wbnbAmount) {
 }
 
 // MAIN TRADE LOOP
-async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 100) { // Changed to 100 trades
+async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 100) {
   const signer = new ethers.Wallet(wallet, provider);
   const tx = { gasPrice: MIN_GAS_PRICE, gasLimit: GAS_LIMIT };
   console.log(`Starting ${maxTrades} trades on ${signer.address}...`);
@@ -156,7 +174,7 @@ async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 100) { // Changed 
         tx
       );
       console.log(`Trade ${i+1}: ${res.hash}`);
-      totalNet += tradeAmt * 16.004342; // Updated price
+      totalNet += tradeAmt * 16.018697; // Updated price
       gasSwaps++;
       if (gasSwaps % 25 === 0) await swapToGas(signer, 0.02);
     } catch (e) {
@@ -180,7 +198,7 @@ async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 100) { // Changed 
   }
 
   if (totalNet < MIN_DAILY_NET) {
-    console.log(`Net ${totalNet} USD < $40, stopping...`);
+    console.log(`Net ${totalNet} USD < $40, stopping...');
     process.exit(1);
   }
 }
@@ -215,6 +233,19 @@ async function swapToGas(signer, amtTIFFY) {
 // EXEMPT WALLETS
 async function exemptWallets(wallets) {
   const signer = new ethers.Wallet(process.env.ADMIN_PRIVATE, provider);
+  // Check if all wallets are already exempt
+  let allExempt = true;
+  for (const wallet of wallets) {
+    const isExempt = await tiffy.isFeeExempt(wallet);
+    if (!isExempt) {
+      allExempt = false;
+      break;
+    }
+  }
+  if (allExempt) {
+    console.log('All wallets already exempt, skipping setExempt');
+    return;
+  }
   try {
     await (await side.connect(signer).setExempt(wallets, true, { gasPrice: MIN_GAS_PRICE, gasLimit: 2500000 })).wait();
     console.log(`Exempted ${wallets.length} wallets`);
@@ -231,15 +262,17 @@ async function start() {
   const signer = new ethers.Wallet(process.env.ADMIN_PRIVATE, provider);
   await withdrawBNB(signer, 0.003); // Withdraw 0.003 BNB
   
+  // Distribute BNB to exempt wallets
+  const recipients = [
+    '0xed9b43bED20B063ae0966C0AEC446bc755fB84bA', // WALLET1: growth
+    '0x6a28ae01Ad12bC73D0c70E88D23CeEd6d6382D19', // WALLET2: liquidity
+    '0x8e8f465cC81b87efE6C58Efb1A03Ff10c32bBf2d', // WALLET3: blessings
+    '0xF27d595F962ed722F39889B23682B39F712B4Da8'  // WALLET4: rewards
+  ];
+  await distributeBNB(signer, recipients, 0.00075); // Send 0.00075 BNB to each
+
   // Exempt wallets
-  const wallets = [
-    process.env.WALLET1,
-    process.env.WALLET2,
-    process.env.WALLET3,
-    process.env.WALLET4,
-    process.env.WALLET5
-  ].filter(w => w).map(w => new ethers.Wallet(w, provider).address);
-  await exemptWallets(wallets);
+  await exemptWallets(recipients);
 
   // Run trades
   for (const key of PRIVATES) {
