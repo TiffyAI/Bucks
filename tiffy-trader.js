@@ -8,7 +8,13 @@ const provider = new ethers.JsonRpcProvider(RPC);
 const web3 = new Web3(RPC);
 
 // Admin wallet
-const PRIVATES = [process.env.ADMIN_PRIVATE];
+const PRIVATES = [
+  process.env.WALLET1,
+  process.env.WALLET2,
+  process.env.WALLET3,
+  process.env.WALLET4,
+  process.env.WALLET5
+].filter(key => key); // Use WALLET1-5 from TIFFYAI contract + admin
 
 // Contract addresses
 const TIFFY = '0xE488253D...'; // Replace with TIFFY address
@@ -16,18 +22,32 @@ const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 const ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E';
 const SIDE_CONTRACT = '0x2a234d5C...'; // Replace with deployed side contract address
 const ADMIN_OWNER = '0x2a234d5C...'; // Replace with admin wallet
-const POOL_ADDRESS = '0x1305302e...'; // Replace with TIFFY/WBNB pair address
+const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d'; // TIFFY/WBNB pair
 const LP_WALLET = '0x85...'; // Replace with LP wallet
 
 // ABIs
-const tiffyAbi = ['function approve(address,uint256) external returns(bool)', 'function balanceOf(address) view returns(uint256)'];
-const wbnbAbi = ['function approve(address,uint256) external returns(bool)', 'function balanceOf(address) view returns(uint256)', 'function deposit() external payable', 'function withdraw(uint256) external'];
+const tiffyAbi = [
+  'function approve(address,uint256) external returns(bool)',
+  'function balanceOf(address) view returns(uint256)',
+  'function transfer(address,uint256) external returns(bool)'
+];
+const wbnbAbi = [
+  'function approve(address,uint256) external returns(bool)',
+  'function balanceOf(address) view returns(uint256)',
+  'function deposit() external payable',
+  'function withdraw(uint256) external'
+];
 const routerAbi = [
   'function getAmountOut(uint,uint,uint) view returns(uint)',
   'function swapExactTokensForTokens(uint,uint,address[],address,uint) external returns(uint[])',
   'function addLiquidity(address,address,uint,uint,uint,uint,address,uint) external returns(uint,uint,uint)'
 ];
-const sideAbi = ['function feedPool(uint256) external', 'function setExempt(address[],bool) external', 'function addLiquidity(uint256,uint256) external'];
+const sideAbi = [
+  'function feedPool(uint256) external',
+  'function setExempt(address[] memory wallets, bool exempt) external',
+  'function addLiquidity(uint256,uint256) external',
+  'function withdrawBNB(uint256) external' // New function
+];
 
 // Contract instances
 const tiffy = new ethers.Contract(TIFFY, tiffyAbi, provider);
@@ -41,6 +61,17 @@ const MIN_GAS_PRICE = ethers.parseUnits('0.1', 'gwei');
 const MAX_GAS_PRICE = ethers.parseUnits('5', 'gwei');
 const GAS_LIMIT = 300000;
 const MIN_DAILY_NET = 40;
+
+// WITHDRAW BNB FROM SIDE CONTRACT
+async function withdrawBNB(signer, amount) {
+  const tx = { gasPrice: MIN_GAS_PRICE, gasLimit: 200000 };
+  try {
+    await (await side.connect(signer).withdrawBNB(ethers.parseUnits(amount.toString(), 18), tx)).wait();
+    console.log(`Withdrew ${amount} BNB from TIFFYAI contract via side contract`);
+  } catch (e) {
+    console.log(`Withdraw failed: ${e.reason || e.message}`);
+  }
+}
 
 // WRAP BNB TO WBNB
 async function wrapBNB(signer, amount) {
@@ -79,13 +110,10 @@ async function addLiquidity(signer, tiffyAmount, wbnbAmount) {
 }
 
 // MAIN TRADE LOOP
-async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 417) {
+async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 100) { // Changed to 100 trades
   const signer = new ethers.Wallet(wallet, provider);
   const tx = { gasPrice: MIN_GAS_PRICE, gasLimit: GAS_LIMIT };
   console.log(`Starting ${maxTrades} trades on ${signer.address}...`);
-
-  // Wrap BNB to WBNB for liquidity
-  await wrapBNB(signer, 0.022);
 
   // Add liquidity before trades
   await addLiquidity(signer, 1.35, 0.022);
@@ -128,7 +156,7 @@ async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 417) {
         tx
       );
       console.log(`Trade ${i+1}: ${res.hash}`);
-      totalNet += tradeAmt * 16.38;
+      totalNet += tradeAmt * 16.004342; // Updated price
       gasSwaps++;
       if (gasSwaps % 25 === 0) await swapToGas(signer, 0.02);
     } catch (e) {
@@ -152,7 +180,7 @@ async function runTrade(wallet, tradeAmt = 0.048, maxTrades = 417) {
   }
 
   if (totalNet < MIN_DAILY_NET) {
-    console.log(`Net ${totalNet} USD < $40, stopping...');
+    console.log(`Net ${totalNet} USD < $40, stopping...`);
     process.exit(1);
   }
 }
@@ -198,6 +226,22 @@ async function exemptWallets(wallets) {
 // MAIN
 async function start() {
   console.log('Starting TIFFY trader...');
+  
+  // Withdraw stuck BNB from TIFFYAI contract
+  const signer = new ethers.Wallet(process.env.ADMIN_PRIVATE, provider);
+  await withdrawBNB(signer, 0.003); // Withdraw 0.003 BNB
+  
+  // Exempt wallets
+  const wallets = [
+    process.env.WALLET1,
+    process.env.WALLET2,
+    process.env.WALLET3,
+    process.env.WALLET4,
+    process.env.WALLET5
+  ].filter(w => w).map(w => new ethers.Wallet(w, provider).address);
+  await exemptWallets(wallets);
+
+  // Run trades
   for (const key of PRIVATES) {
     await runTrade(key);
   }
