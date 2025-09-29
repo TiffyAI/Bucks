@@ -27,60 +27,107 @@
     <h2>Distribute BNB to Exempt Wallets</h2>
     <form id="distributeForm">
         <input type="text" id="distributeWallets" placeholder="Enter wallet addresses (comma-separated)">
-        <input type="number" id="bnbAmount" placeholder="BNB amount (e.g., 0.005)" step="0.001">
+        <input type="number" id="bnbAmount" placeholder="BNB amount (e.g., 0.006)" step="0.001">
         <button type="submit">Distribute BNB</button>
     </form>
 
     <script>
-        const BSCSCAN_API_KEY = 'your_bscscan_api_key'; // Get from BscScan
-        const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d'; // TIFFY/WBNB pair
+        const BACKEND_URL = 'https://bucks-bj2k.onrender.com';
+        const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d';
         const ADMIN_WALLET = '0x2a234d5Cc7431B824723c84c8605fD3968BF0255';
-        const LP_WALLET = '0x85...'; // Update with actual LP wallet
-        const BACKEND_URL = 'your_render_backend_url'; // Render Node.js service (set after deploy)
+        const LP_WALLET = '0x6a28ae01Ad12bC73D0c70E88D23CeEd6d6382D19';
+        const TIFFY_ADDRESS = '0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5';
+        const WBNB_ADDRESS = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
+
+        // Validate EIP-55 checksum
+        async function isValidAddress(address) {
+            if (!address.match(/^0x[a-fA-F0-9]{40}$/)) return false;
+            try {
+                const res = await fetch(`${BACKEND_URL}/validate-address?address=${address}`);
+                const { valid } = await res.json();
+                return valid;
+            } catch (e) {
+                console.error(`Address validation failed: ${e.message}`);
+                return false;
+            }
+        }
+
+        // Fetch live prices
+        async function fetchPrices() {
+            try {
+                const res = await fetch('https://tiffyai.github.io/TIFFY-Market-Value/price.json');
+                const data = await res.json();
+                if (Date.now() - new Date(data.lastUpdated).getTime() > 1800000) {
+                    throw new Error('Stale price data');
+                }
+                const bnbRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd');
+                const bnbData = await bnbRes.json();
+                return {
+                    tiffy: parseFloat(data.tiffyToUSD), // ~$16.72
+                    bnb: bnbData.binancecoin.usd // ~$1010
+                };
+            } catch (e) {
+                console.error(`Price fetch failed: ${e.message}`);
+                return { tiffy: 16.72, bnb: 1010 };
+            }
+        }
 
         // Fetch trades
         async function fetchTrades() {
-            const url = `https://api.bscscan.com/api?module=account&action=txlist&address=${ADMIN_WALLET}&sort=desc&apikey=${BSCSCAN_API_KEY}`;
-            const res = await fetch(url);
-            const data = await res.json();
-            const trades = data.result.slice(0, 10).map(tx => `
-                <p>Tx: <a href="https://bscscan.com/tx/${tx.hash}" target="_blank">${tx.hash.slice(0, 10)}...</a><br>
-                Value: ${(tx.value / 1e18).toFixed(6)} BNB<br>
-                Time: ${new Date(tx.timeStamp * 1000).toLocaleString()}</p>
-            `).join('');
-            document.getElementById('trades').innerHTML = trades || 'No trades found';
+            try {
+                const res = await fetch(`${BACKEND_URL}/trades?address=${ADMIN_WALLET}`);
+                const data = await res.json();
+                const prices = await fetchPrices();
+                const trades = data.result.slice(0, 10).map(tx => {
+                    const valueBNB = (tx.value / 1e18).toFixed(6);
+                    const valueUSD = (valueBNB * prices.bnb).toFixed(2);
+                    return `
+                        <p>Tx: <a href="https://bscscan.com/tx/${tx.hash}" target="_blank">${tx.hash.slice(0, 10)}...</a><br>
+                        Value: ${valueBNB} BNB ($${valueUSD})<br>
+                        Time: ${new Date(tx.timeStamp * 1000).toLocaleString()}</p>
+                    `;
+                }).join('');
+                document.getElementById('trades').innerHTML = trades || 'No trades found';
+            } catch (e) {
+                document.getElementById('trades').innerHTML = 'Failed to load trades';
+            }
         }
 
         // Fetch pool status
         async function fetchPool() {
-            const url = `https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xE488253D...&address=${POOL_ADDRESS}&tag=latest&apikey=${BSCSCAN_API_KEY}`;
-            const res = await fetch(url);
-            const data = await res.json();
-            const tiffyBal = (data.result / 1e18).toFixed(2);
-            const wbnbUrl = `https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c&address=${POOL_ADDRESS}&tag=latest&apikey=${BSCSCAN_API_KEY}`;
-            const wbnbRes = await fetch(wbnbUrl);
-            const wbnbData = await wbnbRes.json();
-            const wbnbBal = (wbnbData.result / 1e18).toFixed(4);
-            document.getElementById('pool').innerHTML = `TIFFY: ${tiffyBal}, WBNB: ${wbnbBal} (~$${tiffyBal * 16.004342 + wbnbBal * 970})`;
+            try {
+                const res = await fetch(`${BACKEND_URL}/pool?pool=${POOL_ADDRESS}`);
+                const data = await res.json();
+                const prices = await fetchPrices();
+                const tiffyBal = (data.tiffy / 1e18).toFixed(2);
+                const wbnbBal = (data.wbnb / 1e18).toFixed(4);
+                const usdValue = (tiffyBal * prices.tiffy + wbnbBal * prices.bnb).toFixed(2);
+                document.getElementById('pool').innerHTML = `TIFFY: ${tiffyBal}, WBNB: ${wbnbBal} (~$${usdValue})`;
+            } catch (e) {
+                document.getElementById('pool').innerHTML = 'Failed to load pool';
+            }
         }
 
         // Fetch wallet balances
         async function fetchWallets() {
-            const adminBal = await fetch(`https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xE488253D...&address=${ADMIN_WALLET}&tag=latest&apikey=${BSCSCAN_API_KEY}`);
-            const adminData = await adminBal.json();
-            const lpBal = await fetch(`https://api.bscscan.com/api?module=account&action=tokenbalance&contractaddress=0xE488253D...&address=${LP_WALLET}&tag=latest&apikey=${BSCSCAN_API_KEY}`;
-            const lpData = await lpBal.json();
-            document.getElementById('wallets').innerHTML = `
-                Admin (${ADMIN_WALLET}): ${(adminData.result / 1e18).toFixed(2)} TIFFY<br>
-                LP (${LP_WALLET}): ${(lpData.result / 1e18).toFixed(2)} TIFFY
-            `;
+            try {
+                const res = await fetch(`${BACKEND_URL}/wallets?admin=${ADMIN_WALLET}&lp=${LP_WALLET}`);
+                const data = await res.json();
+                document.getElementById('wallets').innerHTML = `
+                    Admin (${ADMIN_WALLET}): ${(data.admin / 1e18).toFixed(2)} TIFFY<br>
+                    LP (${LP_WALLET}): ${(data.lp / 1e18).toFixed(2)} TIFFY
+                `;
+            } catch (e) {
+                document.getElementById('wallets').innerHTML = 'Failed to load wallets';
+            }
         }
 
         // Add wallets
         document.getElementById('walletForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const wallets = document.getElementById('newWallets').value.split(',').map(w => w.trim());
-            if (wallets.length === 0 || wallets.some(w => !w.match(/^0x[a-fA-F0-9]{40}$/))) {
+            const valid = await Promise.all(wallets.map(w => isValidAddress(w)));
+            if (wallets.length === 0 || valid.some(v => !v)) {
                 alert('Invalid wallet addresses');
                 return;
             }
@@ -103,7 +150,8 @@
             e.preventDefault();
             const wallets = document.getElementById('distributeWallets').value.split(',').map(w => w.trim());
             const amount = parseFloat(document.getElementById('bnbAmount').value);
-            if (wallets.length === 0 || wallets.some(w => !w.match(/^0x[a-fA-F0-9]{40}$/)) || isNaN(amount) || amount <= 0) {
+            const valid = await Promise.all(wallets.map(w => isValidAddress(w)));
+            if (wallets.length === 0 || valid.some(v => !v) || isNaN(amount) || amount <= 0) {
                 alert('Invalid wallets or BNB amount');
                 return;
             }
@@ -115,6 +163,7 @@
                 });
                 const result = await res.json();
                 alert(result.message || `Distributed ${amount} BNB to ${wallets.length} wallets`);
+                fetchWallets();
             } catch (e) {
                 alert('Failed to distribute BNB: ' + e.message);
             }
