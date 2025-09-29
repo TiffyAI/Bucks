@@ -1,18 +1,22 @@
-require('dotenv').config();
+const express = require('express');
 const { ethers } = require('ethers');
 const axios = require('axios');
+
+const app = express();
+app.use(express.json());
 
 // CONFIG
 const RPC = 'https://bsc-dataseed.binance.org/';
 const provider = new ethers.JsonRpcProvider(RPC);
 const ADMIN_PRIVATE = process.env.ADMIN_PRIVATE;
 const PRIVATES = [
-  process.env.WALLET1, // 0xed9b43... (growth)
-  process.env.WALLET2, // 0x6a28ae01... (liquidity)
-  process.env.WALLET3, // 0x8e8f46... (blessings)
-  process.env.WALLET4, // 0xF27d59... (rewards)
-  process.env.WALLET5  // 0x2a234... (admin)
+  process.env.WALLET1,
+  process.env.WALLET2,
+  process.env.WALLET3,
+  process.env.WALLET4,
+  process.env.WALLET5
 ].filter(key => key);
+const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY;
 
 // Contract addresses
 const TIFFY = '0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5';
@@ -43,8 +47,8 @@ const routerAbi = [
   'function addLiquidity(address,address,uint,uint,uint,uint,address,uint) external returns(uint,uint,uint)'
 ];
 const sideAbi = [
-  'function feedLiquidity(uint256,uint256) external',
-  'function transferTiffyFromMain(uint256) external',
+  'function feedPool(uint256) external',
+  'function addLiquidity(uint256,uint256) external',
   'function setExempt(address[] memory wallets, bool exempt) external',
   'function withdrawBNB(uint256) external'
 ];
@@ -58,25 +62,25 @@ const side = new ethers.Contract(SIDE_CONTRACT, sideAbi, provider);
 // GAS & SAFETY
 const MAX_SLIPPAGE = 500; // 5%
 const MIN_GAS_PRICE = ethers.parseUnits('0.1', 'gwei');
-const MAX_GAS_PRICE = ethers.parseUnits('1', 'gwei'); // Cap at 1 Gwei
-const GAS_LIMIT = 150000; // Optimized for swaps
+const MAX_GAS_PRICE = ethers.parseUnits('1', 'gwei');
+const GAS_LIMIT = 150000;
 const MIN_DAILY_NET = 40; // USD
-const TRADE_AMOUNT = 0.048; // TIFFY per trade
+const TRADE_AMOUNT = 0.048;
 const MAX_TRADES_PER_WALLET = 20;
-const LIQUIDITY_FEED_USD = 20; // $20/cycle
+const LIQUIDITY_FEED_USD = 20;
 
 // FETCH LIVE PRICE
 async function fetchLivePrice() {
   try {
     const response = await axios.get('https://tiffyai.github.io/TIFFY-Market-Value/price.json', { timeout: 5000 });
     const data = response.data;
-    if (Date.now() - new Date(data.lastUpdated).getTime() > 1800000) { // Stale >30 min
+    if (Date.now() - new Date(data.lastUpdated).getTime() > 1800000) {
       throw new Error('Stale price data');
     }
     return {
       tiffyToUSD: parseFloat(data.tiffyToUSD), // ~$16.72
       tiffyToWBNB: parseFloat(data.tiffyToWBNB), // ~0.0165
-      bnbToUSD: 1010, // Fallback, updated below
+      bnbToUSD: 1010,
       lastUpdated: data.lastUpdated
     };
   } catch (e) {
@@ -100,7 +104,7 @@ async function fetchBNBPrice() {
   }
 }
 
-// WITHDRAW BNB FROM CONTRACT
+// WITHDRAW BNB
 async function withdrawBNB(signer, amount) {
   try {
     const tx = await side.connect(signer).withdrawBNB(ethers.parseUnits(amount.toString(), 18), {
@@ -114,7 +118,7 @@ async function withdrawBNB(signer, amount) {
   }
 }
 
-// DISTRIBUTE BNB TO WALLETS
+// DISTRIBUTE BNB
 async function distributeBNB(signer, recipients, amountEach) {
   for (const recipient of recipients) {
     try {
@@ -210,7 +214,7 @@ async function runTrade(wallet, tradeAmt = TRADE_AMOUNT, maxTrades = MAX_TRADES_
     }
     const bnbBalance = await provider.getBalance(signer.address);
     if (bnbBalance < ethers.parseUnits('0.006', 18)) {
-      await swapToGas(signer, 0.01); // Swap 0.01 TIFFY if low
+      await swapToGas(signer, 0.01);
     }
     const gasPrice = await provider.getFeeData().gasPrice;
     if (gasPrice > MAX_GAS_PRICE) {
@@ -232,11 +236,11 @@ async function runTrade(wallet, tradeAmt = TRADE_AMOUNT, maxTrades = MAX_TRADES_
         { gasPrice: MIN_GAS_PRICE, gasLimit: GAS_LIMIT }
       );
       const receipt = await tx.wait();
-      const actualOut = ethers.formatUnits(receipt.logs[0].data, 18); // Parse BNB output
+      const actualOut = ethers.formatUnits(receipt.logs[0].data, 18);
       totalBNB += Number(actualOut);
       const tradeUSD = Number(actualOut) * price.bnbToUSD;
       console.log(`Trade ${i+1}: ${receipt.hash}, BNB: ${actualOut}, USD: $${tradeUSD.toFixed(2)}`);
-      await new Promise(r => setTimeout(r, 30000)); // 30s cooldown
+      await new Promise(r => setTimeout(r, 30000));
     } catch (e) {
       console.error(`Trade ${i+1} failed: ${e.reason || e.message}`);
     }
@@ -247,24 +251,77 @@ async function runTrade(wallet, tradeAmt = TRADE_AMOUNT, maxTrades = MAX_TRADES_
     console.error(`Net ${totalUSD} USD < ${MIN_DAILY_NET / 5}, stopping...`);
     return;
   }
-  // Feed liquidity (~$20/cycle, balanced)
   if (totalBNB > 0.0198) {
-    await addLiquidity(signer, 1.2, 0.0198); // ~$20 at $16.72/TIFFY, $1010/BNB
+    await addLiquidity(signer, 1.2, 0.0198);
   }
 }
+
+// BACKEND ENDPOINTS
+app.get('/trades', async (req, res) => {
+  try {
+    const { address } = req.query;
+    const url = `https://api.bscscan.com/api?module=account&action=txlist&address=${address}&sort=desc&apikey=${BSCSCAN_API_KEY}`;
+    const { data } = await axios.get(url);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ message: 'Failed to fetch trades' });
+  }
+});
+
+app.get('/pool', async (req, res) => {
+  try {
+    const { pool } = req.query;
+    const tiffyBal = await tiffy.balanceOf(pool);
+    const wbnbBal = await wbnb.balanceOf(pool);
+    res.json({ tiffy: tiffyBal, wbnb: wbnbBal });
+  } catch (e) {
+    res.status(500).json({ message: 'Failed to fetch pool' });
+  }
+});
+
+app.get('/wallets', async (req, res) => {
+  try {
+    const { admin, lp } = req.query;
+    const adminBal = await tiffy.balanceOf(admin);
+    const lpBal = await tiffy.balanceOf(lp);
+    res.json({ admin: adminBal, lp: lpBal });
+  } catch (e) {
+    res.status(500).json({ message: 'Failed to fetch wallets' });
+  }
+});
+
+app.post('/exempt', async (req, res) => {
+  try {
+    const { wallets } = req.body;
+    const signer = new ethers.Wallet(ADMIN_PRIVATE, provider);
+    await exemptWallets(signer, wallets);
+    res.json({ message: 'Wallets exempted' });
+  } catch (e) {
+    res.status(500).json({ message: `Exempt failed: ${e.reason || e.message}` });
+  }
+});
+
+app.post('/distribute', async (req, res) => {
+  try {
+    const { wallets, amount } = req.body;
+    const signer = new ethers.Wallet(ADMIN_PRIVATE, provider);
+    await distributeBNB(signer, wallets, amount);
+    res.json({ message: `Distributed ${amount} BNB to ${wallets.length} wallets` });
+  } catch (e) {
+    res.status(500).json({ message: `Distribute failed: ${e.reason || e.message}` });
+  }
+});
 
 // MAIN
 async function start() {
   console.log('Starting TIFFY trader...');
   const signer = new ethers.Wallet(ADMIN_PRIVATE, provider);
   
-  // Initial liquidity add (~$19 from $25 BNB)
   const price = await fetchLivePrice();
-  const tiffyAmt = (19 / 2) / price.tiffyToUSD; // ~0.568 TIFFY at $16.72
-  const bnbAmt = (19 / 2) / price.bnbToUSD; // ~0.0094 BNB at $1010
+  const tiffyAmt = (19 / 2) / price.tiffyToUSD;
+  const bnbAmt = (19 / 2) / price.bnbToUSD;
   await addLiquidity(signer, tiffyAmt, bnbAmt);
   
-  // Distribute BNB (0.006 BNB/wallet)
   const recipients = [
     '0xed9b43bED20B063ae0966C0AEC446bc755fB84bA',
     '0x6a28ae01Ad12bC73D0c70E88D23CeEd6d6382D19',
@@ -274,21 +331,18 @@ async function start() {
   ];
   await distributeBNB(signer, recipients, 0.006);
   
-  // Withdraw contract BNB (0.003 BNB)
   await withdrawBNB(signer, 0.003);
   
-  // Run trades in parallel
   await Promise.all(PRIVATES.map(key => runTrade(key)));
   
-  // Exempt new wallets (after cycle)
-  const newWallets = []; // Add 5 new addresses here
+  const newWallets = []; // Add 5 new addresses
   if (newWallets.length) await exemptWallets(signer, newWallets);
   
   console.log('Cycle done.');
 }
 
+// Start server
+app.listen(3000, () => console.log('Backend running on port 3000'));
+
 // RUN
 start().catch(e => console.error(`Error: ${e.reason || e.message}`));
-
-// CRON (uncomment for auto-run every hour)
-// setInterval(start, 60 * 60 * 1000);
