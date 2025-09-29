@@ -22,7 +22,7 @@ const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY;
 const TIFFY = '0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5';
 const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 const ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E';
-const SIDE_CONTRACT = '0x2a234d5C...'; // Update post-deployment
+const SIDE_CONTRACT = '0x2a234d5Cc7431B824723c84c8605fD3968BF0255'; // Update post-deployment
 const ADMIN_OWNER = '0x2a234d5Cc7431B824723c84c8605fD3968BF0255';
 const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d';
 const LP_WALLET = '0x6a28ae01Ad12bC73D0c70E88D23CeEd6d6382D19';
@@ -80,7 +80,7 @@ async function fetchLivePrice() {
     return {
       tiffyToUSD: parseFloat(data.tiffyToUSD), // ~$16.72
       tiffyToWBNB: parseFloat(data.tiffyToWBNB), // ~0.0165
-      bnbToUSD: 1010,
+      bnbToUSD: 1012,
       lastUpdated: data.lastUpdated
     };
   } catch (e) {
@@ -97,10 +97,10 @@ async function fetchLivePrice() {
 async function fetchBNBPrice() {
   try {
     const { data } = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd', { timeout: 5000 });
-    return data.binancecoin.usd; // ~$1010
+    return data.binancecoin.usd; // ~$1012
   } catch (e) {
     console.error(`BNB price fetch failed: ${e.message}`);
-    return 1010; // Fallback
+    return 1012; // Fallback
   }
 }
 
@@ -312,6 +312,21 @@ app.post('/distribute', async (req, res) => {
   }
 });
 
+app.get('/validate-address', async (req, res) => {
+  try {
+    const { address } = req.query;
+    const Web3 = require('web3');
+    const web3 = new Web3(RPC);
+    const valid = web3.utils.isAddress(address);
+    res.json({ valid });
+  } catch (e) {
+    res.status(500).json({ valid: false, message: `Validation failed: ${e.message}` });
+  }
+});
+
+// Start server
+app.listen(3000, () => console.log('Backend running on port 3000'));
+
 // MAIN
 async function start() {
   console.log('Starting TIFFY trader...');
@@ -340,9 +355,6 @@ async function start() {
   
   console.log('Cycle done.');
 }
-
-// Start server
-app.listen(3000, () => console.log('Backend running on port 3000'));
 
 // RUN
 start().catch(e => console.error(`Error: ${e.reason || e.message}`));
