@@ -64,11 +64,11 @@
                 const bnbData = await bnbRes.json();
                 return {
                     tiffy: parseFloat(data.tiffyToUSD), // ~$16.72
-                    bnb: bnbData.binancecoin.usd // ~$1010
+                    bnb: bnbData.binancecoin.usd // ~$1012
                 };
             } catch (e) {
                 console.error(`Price fetch failed: ${e.message}`);
-                return { tiffy: 16.72, bnb: 1010 };
+                return { tiffy: 16.72, bnb: 1012 };
             }
         }
 
