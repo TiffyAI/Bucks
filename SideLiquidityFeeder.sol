@@ -21,6 +21,7 @@ interface ITiffy {
     function transfer(address to, uint256 amount) external returns (bool);
     function approve(address spender, uint256 amount) external returns (bool);
     function setFeeExempt(address[] memory wallets, bool exempt) external;
+    function balanceOf(address account) external view returns (uint256);
 }
 
 contract SideLiquidityFeeder is Ownable {
