@@ -18,20 +18,17 @@ interface IPancakeRouter {
 }
 
 interface ITiffy {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external returns (bool);
     function setFeeExempt(address[] memory wallets, bool exempt) external;
-    function balanceOf(address account) external view returns (uint256);
 }
 
 contract SideLiquidityFeeder is Ownable {
-    ITiffy public immutable tiffy;
+    IERC20 public immutable tiffy; // Changed from ITiffy to IERC20
     IERC20 public immutable wbnb;
     IPancakeRouter public immutable router;
     address public immutable pool;
 
     constructor(address _tiffy, address _wbnb, address _router, address _pool) Ownable(msg.sender) {
-        tiffy = ITiffy(_tiffy);
+        tiffy = IERC20(_tiffy);
         wbnb = IERC20(_wbnb);
         router = IPancakeRouter(_router);
         pool = _pool;
@@ -61,7 +58,7 @@ contract SideLiquidityFeeder is Ownable {
     }
 
     function setExempt(address[] memory wallets, bool exempt) external onlyOwner {
-        tiffy.setFeeExempt(wallets, exempt);
+        ITiffy(address(tiffy)).setFeeExempt(wallets, exempt); // Cast to ITiffy for setFeeExempt
     }
 
     function withdrawBNB(uint256 amount) external onlyOwner {
