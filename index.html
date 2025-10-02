@@ -27,9 +27,11 @@
     <h2>Distribute BNB to Exempt Wallets</h2>
     <form id="distributeForm">
         <input type="text" id="distributeWallets" placeholder="Enter wallet addresses (comma-separated)">
-        <input type="number" id="bnbAmount" placeholder="BNB amount (e.g., 0.006)" step="0.001">
+        <input type="number" id="bnbAmount" placeholder="BNB amount (e.g., 0.0004)" step="0.001">
         <button type="submit">Distribute BNB</button>
     </form>
+    <h2>Start Trades</h2>
+    <button id="startTrades">Start Trades</button>
 
     <script>
         const BACKEND_URL = 'https://bucks-bj2k.onrender.com';
@@ -63,12 +65,12 @@
                 const bnbRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd');
                 const bnbData = await bnbRes.json();
                 return {
-                    tiffy: parseFloat(data.tiffyToUSD), // ~$16.72
-                    bnb: bnbData.binancecoin.usd // ~$1012
+                    tiffy: parseFloat(data.tiffyToUSD), // ~$16.959032
+                    bnb: bnbData.binancecoin.usd // ~$1030
                 };
             } catch (e) {
                 console.error(`Price fetch failed: ${e.message}`);
-                return { tiffy: 16.72, bnb: 1012 };
+                return { tiffy: 16.959032, bnb: 1030 };
             }
         }
 
@@ -166,6 +168,17 @@
                 fetchWallets();
             } catch (e) {
                 alert('Failed to distribute BNB: ' + e.message);
+            }
+        });
+
+        // Start trades
+        document.getElementById('startTrades').addEventListener('click', async () => {
+            try {
+                const res = await fetch(`${BACKEND_URL}/start-trades`);
+                const result = await res.json();
+                alert(result.message || '100 Trades Successful. Cool, now you can add 5 more wallets. Let\'s run again.');
+            } catch (e) {
+                alert('Failed to start trades: ' + e.message);
             }
         });
 
