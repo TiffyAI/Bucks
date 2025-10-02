@@ -22,7 +22,7 @@ const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY;
 const TIFFY = '0xE488253DD6B4D31431142F1b7601C96f24Fb7dd5';
 const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
 const ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E';
-const SIDE_CONTRACT = '0x4554f4C42618318da882c005E1BA9f612289c15a'; // Updated
+const SIDE_CONTRACT = '0x4554f4C42618318da882c005E1BA9f612289c15a';
 const ADMIN_OWNER = '0x2a234d5Cc7431B824723c84c8605fD3968BF0255';
 const POOL_ADDRESS = '0x1305302ef3929dd9252b051077e4ca182107f00d';
 const LP_WALLET = '0x6a28ae01Ad12bC73D0c70E88D23CeEd6d6382D19';
@@ -78,9 +78,9 @@ async function fetchLivePrice() {
       throw new Error('Stale price data');
     }
     return {
-      tiffyToUSD: parseFloat(data.tiffyToUSD), // ~$16.72
+      tiffyToUSD: parseFloat(data.tiffyToUSD), // ~$16.959032
       tiffyToWBNB: parseFloat(data.tiffyToWBNB), // ~0.0165
-      bnbToUSD: 1012,
+      bnbToUSD: 1030,
       lastUpdated: data.lastUpdated
     };
   } catch (e) {
@@ -97,10 +97,10 @@ async function fetchLivePrice() {
 async function fetchBNBPrice() {
   try {
     const { data } = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd', { timeout: 5000 });
-    return data.binancecoin.usd; // ~$1012
+    return data.binancecoin.usd; // ~$1030
   } catch (e) {
     console.error(`BNB price fetch failed: ${e.message}`);
-    return 1012; // Fallback
+    return 1030; // Fallback
   }
 }
 
@@ -213,7 +213,7 @@ async function runTrade(wallet, tradeAmt = TRADE_AMOUNT, maxTrades = MAX_TRADES_
       break;
     }
     const bnbBalance = await provider.getBalance(signer.address);
-    if (bnbBalance < ethers.parseUnits('0.006', 18)) {
+    if (bnbBalance < ethers.parseUnits('0.0004', 18)) {
       await swapToGas(signer, 0.01);
     }
     const gasPrice = await provider.getFeeData().gasPrice;
@@ -324,6 +324,16 @@ app.get('/validate-address', async (req, res) => {
   }
 });
 
+// Start trades endpoint
+app.get('/start-trades', async (req, res) => {
+  try {
+    await start();
+    res.json({ message: '100 Trades Successful. Cool, now you can add 5 more wallets. Let\'s run again.' });
+  } catch (e) {
+    res.status(500).json({ message: `Trades failed: ${e.reason || e.message}` });
+  }
+});
+
 // Start server
 app.listen(3000, () => console.log('Backend running on port 3000'));
 
@@ -333,8 +343,8 @@ async function start() {
   const signer = new ethers.Wallet(ADMIN_PRIVATE, provider);
   
   const price = await fetchLivePrice();
-  const tiffyAmt = (19 / 2) / price.tiffyToUSD;
-  const bnbAmt = (19 / 2) / price.bnbToUSD;
+  const tiffyAmt = (19 / 2) / price.tiffyToUSD; // ~0.56 TIFFY
+  const bnbAmt = (19 / 2) / price.bnbToUSD; // ~0.0093 BNB
   await addLiquidity(signer, tiffyAmt, bnbAmt);
   
   const recipients = [
@@ -344,17 +354,14 @@ async function start() {
     '0xF27d595F962ed722F39889B23682B39F712B4Da8',
     '0x2a234d5Cc7431B824723c84c8605fD3968BF0255'
   ];
-  await distributeBNB(signer, recipients, 0.006);
+  await distributeBNB(signer, recipients, 0.0004); // Adjusted to 0.0004 BNB/wallet
   
   await withdrawBNB(signer, 0.003);
   
   await Promise.all(PRIVATES.map(key => runTrade(key)));
   
-  const newWallets = []; // Add 5 new addresses
+  const newWallets = []; // Empty by default, add via dashboard
   if (newWallets.length) await exemptWallets(signer, newWallets);
   
   console.log('Cycle done.');
 }
-
-// RUN
-start().catch(e => console.error(`Error: ${e.reason || e.message}`));
