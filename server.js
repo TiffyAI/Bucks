@@ -1,9 +1,16 @@
 const express = require('express');
-const { ethers } = require('ethers');
 const axios = require('axios');
+const { ethers } = require('ethers');
+const Web3 = require('web3');
 
 const app = express();
 app.use(express.json());
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://tiffyai.github.io');
+  res.header('Access-Control-Allow-Methods', 'GET, POST');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
 
 // CONFIG
 const RPC = 'https://bsc-dataseed.binance.org/';
@@ -66,7 +73,7 @@ const MAX_GAS_PRICE = ethers.parseUnits('1', 'gwei');
 const GAS_LIMIT = 150000;
 const MIN_DAILY_NET = 40; // USD
 const TRADE_AMOUNT = 0.048;
-const MAX_TRADES_PER_WALLET = 20;
+const MAX_TRADES_PER_WALLET = 2;
 const LIQUIDITY_FEED_USD = 20;
 
 // FETCH LIVE PRICE
@@ -78,7 +85,7 @@ async function fetchLivePrice() {
       throw new Error('Stale price data');
     }
     return {
-      tiffyToUSD: parseFloat(data.tiffyToUSD), // ~$16.959032
+      tiffyToUSD: parseFloat(data.tiffyToUSD), // ~$18.075257
       tiffyToWBNB: parseFloat(data.tiffyToWBNB), // ~0.0165
       bnbToUSD: 1030,
       lastUpdated: data.lastUpdated
@@ -264,7 +271,8 @@ app.get('/trades', async (req, res) => {
     const { data } = await axios.get(url);
     res.json(data);
   } catch (e) {
-    res.status(500).json({ message: 'Failed to fetch trades' });
+    console.error('Trade fetch error:', e.message);
+    res.status(500).json({ message: 'Failed to fetch trades', error: e.message });
   }
 });
 
@@ -273,9 +281,10 @@ app.get('/pool', async (req, res) => {
     const { pool } = req.query;
     const tiffyBal = await tiffy.balanceOf(pool);
     const wbnbBal = await wbnb.balanceOf(pool);
-    res.json({ tiffy: tiffyBal, wbnb: wbnbBal });
+    res.json({ tiffy: tiffyBal.toString(), wbnb: wbnbBal.toString() });
   } catch (e) {
-    res.status(500).json({ message: 'Failed to fetch pool' });
+    console.error('Pool fetch error:', e.message);
+    res.status(500).json({ message: 'Failed to fetch pool', error: e.message });
   }
 });
 
@@ -284,9 +293,10 @@ app.get('/wallets', async (req, res) => {
     const { admin, lp } = req.query;
     const adminBal = await tiffy.balanceOf(admin);
     const lpBal = await tiffy.balanceOf(lp);
-    res.json({ admin: adminBal, lp: lpBal });
+    res.json({ admin: adminBal.toString(), lp: lpBal.toString() });
   } catch (e) {
-    res.status(500).json({ message: 'Failed to fetch wallets' });
+    console.error('Wallets fetch error:', e.message);
+    res.status(500).json({ message: 'Failed to fetch wallets', error: e.message });
   }
 });
 
@@ -297,6 +307,7 @@ app.post('/exempt', async (req, res) => {
     await exemptWallets(signer, wallets);
     res.json({ message: 'Wallets exempted' });
   } catch (e) {
+    console.error('Exempt error:', e.message);
     res.status(500).json({ message: `Exempt failed: ${e.reason || e.message}` });
   }
 });
@@ -308,6 +319,7 @@ app.post('/distribute', async (req, res) => {
     await distributeBNB(signer, wallets, amount);
     res.json({ message: `Distributed ${amount} BNB to ${wallets.length} wallets` });
   } catch (e) {
+    console.error('Distribute error:', e.message);
     res.status(500).json({ message: `Distribute failed: ${e.reason || e.message}` });
   }
 });
@@ -315,27 +327,27 @@ app.post('/distribute', async (req, res) => {
 app.get('/validate-address', async (req, res) => {
   try {
     const { address } = req.query;
-    const Web3 = require('web3');
     const web3 = new Web3(RPC);
     const valid = web3.utils.isAddress(address);
     res.json({ valid });
   } catch (e) {
+    console.error('Validate address error:', e.message);
     res.status(500).json({ valid: false, message: `Validation failed: ${e.message}` });
   }
 });
 
-// Start trades endpoint
-app.get('/start-trades', async (req, res) => {
+app.post('/start-trades', async (req, res) => {
   try {
     await start();
     res.json({ message: '100 Trades Successful. Cool, now you can add 5 more wallets. Let\'s run again.' });
   } catch (e) {
+    console.error('Start trades error:', e.message);
     res.status(500).json({ message: `Trades failed: ${e.reason || e.message}` });
   }
 });
 
 // Start server
-app.listen(3000, () => console.log('Backend running on port 3000'));
+app.listen(3000, '0.0.0.0', () => console.log('Backend running on port 3000'));
 
 // MAIN
 async function start() {
@@ -343,8 +355,8 @@ async function start() {
   const signer = new ethers.Wallet(ADMIN_PRIVATE, provider);
   
   const price = await fetchLivePrice();
-  const tiffyAmt = (19 / 2) / price.tiffyToUSD; // ~0.56 TIFFY
-  const bnbAmt = (19 / 2) / price.bnbToUSD; // ~0.0093 BNB
+  const tiffyAmt = (19 / 2) / price.tiffyToUSD; // ~0.526 TIFFY
+  const bnbAmt = (19 / 2) / price.bnbToUSD; // ~0.0092 BNB
   await addLiquidity(signer, tiffyAmt, bnbAmt);
   
   const recipients = [
@@ -354,7 +366,7 @@ async function start() {
     '0xF27d595F962ed722F39889B23682B39F712B4Da8',
     '0x2a234d5Cc7431B824723c84c8605fD3968BF0255'
   ];
-  await distributeBNB(signer, recipients, 0.0004); // Adjusted to 0.0004 BNB/wallet
+  await distributeBNB(signer, recipients, 0.0004);
   
   await withdrawBNB(signer, 0.003);
   
